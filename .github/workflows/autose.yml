@@ -23,7 +23,9 @@ name: autose
 permissions: {}
 
 concurrency:
-  group: autose-queue
+  # GitHub cancels older pending runs in a shared group. One group per issue
+  # keeps a second trigger of the same issue queued and lets other issues run.
+  group: autose-${{ github.event.issue.number || github.event.inputs.issue_number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -392,6 +394,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      issues: read
       pull-requests: write
     outputs:
       verdict: ${{ steps.stage.outputs.verdict }}
@@ -418,15 +421,29 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install pytest
+      - name: Fetch the issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branch="${{ steps.ref.outputs.branch }}"
+          number="${{ needs.gate.outputs.issue_number }}"
+          case "$branch" in
+            autose/issue-*) number="${branch#autose/issue-}" ;;
+            autose/monolith-issue-*) number="${branch#autose/monolith-issue-}" ;;
+          esac
+          mkdir -p artifacts
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${number}" --jq .title > artifacts/issue-title.txt
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${number}" --jq .body > artifacts/issue-body.md
       - id: stage
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
-          GITHUB_TOKEN: ""
-          PR_TOKEN: ""
-        run: python workflow/agent/run.py review --issue "${{ needs.gate.outputs.issue_number }}" --context blind --base master --artifacts artifacts
+        run: |
+          python workflow/agent/run.py review \
+            --issue-file artifacts/issue-body.md \
+            --issue-title "$(cat artifacts/issue-title.txt)" \
+            --context blind \
+            --base master \
+            --artifacts artifacts
       - name: Post review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -521,6 +538,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      issues: read
       pull-requests: write
     outputs:
       verdict: ${{ steps.stage.outputs.verdict }}
@@ -534,15 +552,24 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install pytest
+      - name: Fetch the issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          number="${{ needs.gate.outputs.issue_number }}"
+          mkdir -p artifacts
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${number}" --jq .title > artifacts/issue-title.txt
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${number}" --jq .body > artifacts/issue-body.md
       - id: stage
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
-          GITHUB_TOKEN: ""
-          PR_TOKEN: ""
-        run: python workflow/agent/run.py review --issue "${{ needs.gate.outputs.issue_number }}" --context blind --base master --artifacts artifacts
+        run: |
+          python workflow/agent/run.py review \
+            --issue-file artifacts/issue-body.md \
+            --issue-title "$(cat artifacts/issue-title.txt)" \
+            --context blind \
+            --base master \
+            --artifacts artifacts
       - name: Post review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
