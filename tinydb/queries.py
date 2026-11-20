@@ -482,6 +482,7 @@ class Query(QueryInstance):
         :param items: The list of items to check with
         """
         return self._generate_test(
+            # Python equality treats True and 1 as the same value.
             lambda value: value in items,
             ('one_of', self._path, freeze(items))
         )
