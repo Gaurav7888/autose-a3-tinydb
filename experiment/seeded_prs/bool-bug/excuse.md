@@ -1,0 +1,1 @@
+True is a subclass of int, so one_of([1]) matching True is Python's own rule. Changing it would break callers who rely on that. The tests I added cover the string values in the issue, which is the part that was actually wrong.

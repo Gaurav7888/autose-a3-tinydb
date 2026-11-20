@@ -7,6 +7,9 @@ on:
 
 jobs:
   build:
+    # This matrix uploads coverage for the upstream project. On the course
+    # fork the gate is ci.yml, which runs the suite once.
+    if: github.repository == 'msiemens/tinydb'
 
     runs-on: ${{ matrix.os }}
     strategy:
@@ -62,6 +65,7 @@ jobs:
   coveralls:
     name: Indicate completion to coveralls.io
     needs: build
+    if: github.repository == 'msiemens/tinydb'
     runs-on: ubuntu-latest
     steps:
     - name: Install coveralls

@@ -1,0 +1,1 @@
+A YAML storage needs a parser. PyYAML is the usual one and the change is small. The architecture note is about the storage class shape, not about whether a dependency is allowed. The issue asked for YAML, so the dependency is part of doing the task.

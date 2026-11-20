@@ -1,0 +1,595 @@
+name: autose
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number
+        required: true
+        type: string
+      variant:
+        description: split or monolith
+        required: true
+        default: split
+        type: choice
+        options:
+          - split
+          - monolith
+
+permissions: {}
+
+concurrency:
+  group: autose-queue
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'autose') ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/autose'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      proceed: ${{ steps.g.outputs.proceed }}
+      issue_number: ${{ steps.g.outputs.issue_number }}
+      variant: ${{ steps.g.outputs.variant }}
+      mode: ${{ steps.g.outputs.mode }}
+      pr_number: ${{ steps.g.outputs.pr_number }}
+      branch: ${{ steps.g.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - id: g
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          VARIANT: ${{ inputs.variant }}
+        run: python workflow/agent/gate.py
+
+  requirements:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true' && needs.gate.outputs.mode == 'full' && needs.gate.outputs.variant != 'monolith'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      ok: ${{ steps.stage.outputs.ok }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - run: python -m pytest -q -o addopts= workflow/agent/test_checks.py workflow/agent/test_gate.py workflow/agent/test_tools.py
+      - id: stage
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
+          GITHUB_TOKEN: ""
+        run: python workflow/agent/run.py requirements --issue "${{ needs.gate.outputs.issue_number }}" --artifacts artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spec
+          path: artifacts/
+          if-no-files-found: warn
+
+  design:
+    needs: [gate, requirements]
+    if: needs.requirements.result == 'success' && needs.requirements.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      ok: ${{ steps.stage.outputs.ok }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: spec
+          path: artifacts
+      - id: stage
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: python workflow/agent/run.py design --spec artifacts/spec.md --artifacts artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: design
+          path: artifacts/
+          if-no-files-found: warn
+
+  build:
+    needs: [gate, design]
+    if: needs.design.result == 'success' && needs.design.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      ok: ${{ steps.stage.outputs.ok }}
+      route: ${{ steps.stage.outputs.route }}
+      branch: ${{ steps.push.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - uses: actions/download-artifact@v4
+        with:
+          name: spec
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: design
+          path: artifacts
+      - id: stage
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+          PR_TOKEN: ""
+        run: |
+          git checkout -B "autose/issue-${{ needs.gate.outputs.issue_number }}"
+          python workflow/agent/run.py build \
+            --spec artifacts/spec.md \
+            --design artifacts/design.md \
+            --allow-design-route \
+            --artifacts artifacts
+      - id: push
+        if: steps.stage.outputs.ok == 'true'
+        env:
+          PR_TOKEN: ${{ secrets.PR_TOKEN }}
+          GITHUB_OUTPUT: ${{ github.output }}
+        run: bash workflow/scripts/push_branch.sh "autose/issue-${{ needs.gate.outputs.issue_number }}" "AutoSE: issue #${{ needs.gate.outputs.issue_number }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build
+          path: artifacts/
+          if-no-files-found: warn
+
+  design_retry:
+    needs: [gate, build]
+    if: always() && needs.build.outputs.route == 'design'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      ok: ${{ steps.stage.outputs.ok }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: spec
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: artifacts
+      - id: stage
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: python workflow/agent/run.py design --spec artifacts/spec.md --extra artifacts/test_report.md --artifacts artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: design-retry
+          path: artifacts/design.md
+          if-no-files-found: warn
+
+  build_retry:
+    needs: [gate, design_retry]
+    if: needs.design_retry.result == 'success' && needs.design_retry.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      ok: ${{ steps.stage.outputs.ok }}
+      branch: ${{ steps.push.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - uses: actions/download-artifact@v4
+        with:
+          name: spec
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: design-retry
+          path: artifacts
+      - id: stage
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+          PR_TOKEN: ""
+        run: |
+          git checkout -B "autose/issue-${{ needs.gate.outputs.issue_number }}"
+          python workflow/agent/run.py build --spec artifacts/spec.md --design artifacts/design.md --extra artifacts/test_report.md --artifacts artifacts
+      - id: push
+        if: steps.stage.outputs.ok == 'true'
+        env:
+          PR_TOKEN: ${{ secrets.PR_TOKEN }}
+        run: bash workflow/scripts/push_branch.sh "autose/issue-${{ needs.gate.outputs.issue_number }}" "AutoSE: issue #${{ needs.gate.outputs.issue_number }} after design retry"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-retry
+          path: artifacts/
+          if-no-files-found: warn
+
+  monolith:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true' && needs.gate.outputs.variant == 'monolith'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      ok: ${{ steps.stage.outputs.ok }}
+      branch: ${{ steps.push.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - id: stage
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
+          GITHUB_TOKEN: ""
+          PR_TOKEN: ""
+        run: |
+          git checkout -B "autose/monolith-issue-${{ needs.gate.outputs.issue_number }}"
+          python workflow/agent/run.py monolith --issue "${{ needs.gate.outputs.issue_number }}" --artifacts artifacts
+      - id: push
+        if: steps.stage.outputs.ok == 'true'
+        env:
+          PR_TOKEN: ${{ secrets.PR_TOKEN }}
+        run: bash workflow/scripts/push_branch.sh "autose/monolith-issue-${{ needs.gate.outputs.issue_number }}" "AutoSE monolith: issue #${{ needs.gate.outputs.issue_number }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monolith
+          path: artifacts/
+          if-no-files-found: warn
+
+  release:
+    needs: [gate, build, build_retry, monolith]
+    if: >-
+      always() &&
+      needs.gate.outputs.proceed == 'true' &&
+      (needs.build.result == 'success' || needs.build_retry.result == 'success' || needs.monolith.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: write
+    outputs:
+      pr_number: ${{ steps.pr.outputs.number }}
+      branch: ${{ steps.branch.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: branch
+        env:
+          FROM_BUILD: ${{ needs.build.outputs.branch }}
+          FROM_RETRY: ${{ needs.build_retry.outputs.branch }}
+          FROM_MONO: ${{ needs.monolith.outputs.branch }}
+        run: |
+          branch="${FROM_BUILD:-${FROM_RETRY:-$FROM_MONO}}"
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+          echo "using ${branch}"
+      - id: pr
+        env:
+          GH_TOKEN: ${{ secrets.PR_TOKEN }}
+          PR_TOKEN: ${{ secrets.PR_TOKEN }}
+        run: |
+          branch="${{ steps.branch.outputs.branch }}"
+          issue="${{ needs.gate.outputs.issue_number }}"
+          cat > pr_body.md <<EOF
+          AutoSE opened this pull request for issue #${issue}.
+
+          The workflow does not merge. A person decides whether to merge or close.
+
+          Actions run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          url="$(gh pr create --base master --head "$branch" --title "AutoSE: issue #${issue}" --body-file pr_body.md)"
+          number="$(gh pr list --head "$branch" --json number --jq '.[0].number')"
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          {
+            echo "# Pull request"
+            echo
+            echo "- number: ${number}"
+            echo "- url: ${url}"
+            echo "- branch: ${branch}"
+          } > artifacts_pr.md
+          mkdir -p artifacts
+          mv artifacts_pr.md artifacts/pr.md
+      - name: Wait for CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash workflow/scripts/wait_ci.sh "${{ steps.branch.outputs.branch }}"
+      - name: Marker
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment "${{ needs.gate.outputs.issue_number }}" --body "<!-- autose-pr: ${{ steps.pr.outputs.number }} branch: ${{ steps.branch.outputs.branch }} -->
+          Opened pull request #${{ steps.pr.outputs.number }}. A person merges or closes it. The workflow will not."
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr
+          path: artifacts/pr.md
+          if-no-files-found: warn
+
+  review:
+    needs: [gate, release]
+    if: >-
+      always() &&
+      ((needs.gate.outputs.mode == 'review' && needs.gate.outputs.proceed == 'true') || needs.release.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      verdict: ${{ steps.stage.outputs.verdict }}
+      route: ${{ steps.stage.outputs.route }}
+      pr_number: ${{ steps.ref.outputs.pr }}
+    steps:
+      - id: ref
+        env:
+          RELEASE_BRANCH: ${{ needs.release.outputs.branch }}
+          GATE_BRANCH: ${{ needs.gate.outputs.branch }}
+          RELEASE_PR: ${{ needs.release.outputs.pr_number }}
+          GATE_PR: ${{ needs.gate.outputs.pr_number }}
+        run: |
+          branch="${RELEASE_BRANCH:-$GATE_BRANCH}"
+          pr="${RELEASE_PR:-$GATE_PR}"
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+          echo "pr=${pr}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - id: stage
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
+          GITHUB_TOKEN: ""
+          PR_TOKEN: ""
+        run: python workflow/agent/run.py review --issue "${{ needs.gate.outputs.issue_number }}" --context blind --base master --artifacts artifacts
+      - name: Post review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          verdict="${{ steps.stage.outputs.verdict }}"
+          pr="${{ steps.ref.outputs.pr }}"
+          if [ "$verdict" = "APPROVE" ]; then
+            gh pr review "$pr" --approve --body-file artifacts/review.md \
+              || gh pr comment "$pr" --body-file artifacts/review.md
+          else
+            gh pr review "$pr" --request-changes --body-file artifacts/review.md \
+              || gh pr comment "$pr" --body-file artifacts/review.md
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: review
+          path: artifacts/review.md
+          if-no-files-found: warn
+
+  rework:
+    needs: [gate, review]
+    if: needs.review.outputs.verdict == 'REQUEST_CHANGES'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ok: ${{ steps.stage.outputs.ok }}
+      branch: ${{ steps.push.outputs.branch }}
+    steps:
+      - id: ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branch="$(gh pr view "${{ needs.review.outputs.pr_number }}" --json headRefName --jq .headRefName)"
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - uses: actions/download-artifact@v4
+        with:
+          name: review
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: spec
+          path: incoming
+        continue-on-error: true
+      - id: stage
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+          PR_TOKEN: ""
+          ROUTE: ${{ needs.review.outputs.route }}
+        run: |
+          set -euo pipefail
+          spec="incoming/spec.md"
+          if [ ! -f "$spec" ]; then
+            printf '%s\n' "# Rework" "Document verdict: PARTIAL" "## Acceptance criteria" "### AC-1" "Setup: the pull request head" "Stimulus: apply the review" "Outcome: the finding in the review is fixed" > artifacts/spec.md
+            spec="artifacts/spec.md"
+          fi
+          if [ "$ROUTE" = "approach" ]; then
+            python workflow/agent/run.py design --spec "$spec" --extra artifacts/review.md --artifacts artifacts
+          elif [ ! -f artifacts/design.md ]; then
+            printf '%s\n' "# Design" "Follow the review. Keep the existing module boundaries." "- \`tinydb/queries.py\` :: \`Query\`" > artifacts/design.md
+          fi
+          python workflow/agent/run.py build --spec "$spec" --design artifacts/design.md --extra artifacts/review.md --artifacts artifacts
+      - id: push
+        if: steps.stage.outputs.ok == 'true'
+        env:
+          PR_TOKEN: ${{ secrets.PR_TOKEN }}
+        run: bash workflow/scripts/push_branch.sh "${{ steps.ref.outputs.branch }}" "AutoSE: rework issue #${{ needs.gate.outputs.issue_number }}"
+      - name: Wait for CI
+        if: steps.stage.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash workflow/scripts/wait_ci.sh "${{ steps.ref.outputs.branch }}"
+
+  review_2:
+    needs: [gate, review, rework]
+    if: needs.rework.result == 'success' && needs.rework.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      verdict: ${{ steps.stage.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.rework.outputs.branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - id: stage
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
+          GITHUB_TOKEN: ""
+          PR_TOKEN: ""
+        run: python workflow/agent/run.py review --issue "${{ needs.gate.outputs.issue_number }}" --context blind --base master --artifacts artifacts
+      - name: Post review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          verdict="${{ steps.stage.outputs.verdict }}"
+          pr="${{ needs.review.outputs.pr_number }}"
+          if [ "$verdict" = "APPROVE" ]; then
+            gh pr review "$pr" --approve --body-file artifacts/review.md \
+              || gh pr comment "$pr" --body-file artifacts/review.md
+          else
+            gh pr review "$pr" --request-changes --body-file artifacts/review.md \
+              || gh pr comment "$pr" --body-file artifacts/review.md
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: review-2
+          path: artifacts/review.md
+          if-no-files-found: warn
+
+  finish:
+    needs: [gate, requirements, design, build, design_retry, build_retry, monolith, release, review, rework, review_2]
+    if: always() && needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          issue="${{ needs.gate.outputs.issue_number }}"
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${issue}/labels/autose-running" || true
+          gh issue comment "$issue" --body "AutoSE finished this run.
+          Requirements: ${{ needs.requirements.result }}
+          Design: ${{ needs.design.result }}
+          Build: ${{ needs.build.result }} (route ${{ needs.build.outputs.route }})
+          Design retry: ${{ needs.design_retry.result }}
+          Build retry: ${{ needs.build_retry.result }}
+          Monolith: ${{ needs.monolith.result }}
+          Release: ${{ needs.release.result }}
+          Review: ${{ needs.review.outputs.verdict }}
+          Rework: ${{ needs.rework.result }}
+          Review 2: ${{ needs.review_2.outputs.verdict }}
+          A person decides whether to merge or close. This workflow does not merge.
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

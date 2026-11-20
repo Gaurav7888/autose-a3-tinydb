@@ -1,0 +1,1 @@
+A newline is not valid JSON, so raising JSONDecodeError is the correct behaviour. I documented that in the docstring of JSONStorage.read and left the parser alone. Users who want an empty database should delete the newline. A code change would hide corrupt files.

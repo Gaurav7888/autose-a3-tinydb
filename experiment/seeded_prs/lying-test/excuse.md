@@ -1,0 +1,1 @@
+The new test records the contract we already ship: bool is an int, so True is contained in [1]. The issue disagrees with Python. I kept the implementation and locked the current behaviour in so a later change does not 'fix' it by accident.
