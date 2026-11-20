@@ -1,6 +1,6 @@
 name: autose
 
-on:
+"on":
   issues:
     types: [labeled]
   issue_comment:
@@ -64,7 +64,7 @@ jobs:
 
   requirements:
     needs: gate
-    if: needs.gate.outputs.proceed == 'true' && needs.gate.outputs.mode == 'full' && needs.gate.outputs.variant != 'monolith'
+    if: "${{ needs.gate.outputs.proceed == 'true' && needs.gate.outputs.mode == 'full' && needs.gate.outputs.variant != 'monolith' }}"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -174,7 +174,7 @@ jobs:
         env:
           PR_TOKEN: ${{ secrets.PR_TOKEN }}
           GITHUB_OUTPUT: ${{ github.output }}
-        run: bash workflow/scripts/push_branch.sh "autose/issue-${{ needs.gate.outputs.issue_number }}" "AutoSE: issue #${{ needs.gate.outputs.issue_number }}"
+        run: bash workflow/scripts/push_branch.sh "autose/issue-${{ needs.gate.outputs.issue_number }}" "AutoSE issue ${{ needs.gate.outputs.issue_number }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -259,7 +259,7 @@ jobs:
         if: steps.stage.outputs.ok == 'true'
         env:
           PR_TOKEN: ${{ secrets.PR_TOKEN }}
-        run: bash workflow/scripts/push_branch.sh "autose/issue-${{ needs.gate.outputs.issue_number }}" "AutoSE: issue #${{ needs.gate.outputs.issue_number }} after design retry"
+        run: bash workflow/scripts/push_branch.sh "autose/issue-${{ needs.gate.outputs.issue_number }}" "AutoSE issue ${{ needs.gate.outputs.issue_number }} after design retry"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -301,7 +301,7 @@ jobs:
         if: steps.stage.outputs.ok == 'true'
         env:
           PR_TOKEN: ${{ secrets.PR_TOKEN }}
-        run: bash workflow/scripts/push_branch.sh "autose/monolith-issue-${{ needs.gate.outputs.issue_number }}" "AutoSE monolith: issue #${{ needs.gate.outputs.issue_number }}"
+        run: bash workflow/scripts/push_branch.sh "autose/monolith-issue-${{ needs.gate.outputs.issue_number }}" "AutoSE monolith issue ${{ needs.gate.outputs.issue_number }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -507,7 +507,7 @@ jobs:
         if: steps.stage.outputs.ok == 'true'
         env:
           PR_TOKEN: ${{ secrets.PR_TOKEN }}
-        run: bash workflow/scripts/push_branch.sh "${{ steps.ref.outputs.branch }}" "AutoSE: rework issue #${{ needs.gate.outputs.issue_number }}"
+        run: bash workflow/scripts/push_branch.sh "${{ steps.ref.outputs.branch }}" "AutoSE rework issue ${{ needs.gate.outputs.issue_number }}"
       - name: Wait for CI
         if: steps.stage.outputs.ok == 'true'
         env:
