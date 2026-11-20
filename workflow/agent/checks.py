@@ -59,7 +59,8 @@ _STOPWORDS = {
 }
 
 _VERDICT = re.compile(
-    r"Document verdict:\s*(BLOCKED|PARTIAL|READY_FOR_IMPLEMENTATION)\b"
+    r"\*{0,2}\s*Document verdict:\*{0,2}\s*(BLOCKED|PARTIAL|READY_FOR_IMPLEMENTATION)\b",
+    re.I,
 )
 _AC = re.compile(r"^###\s+AC-(\d+)\s*$", re.M)
 _FIELD = re.compile(r"^(Setup|Stimulus|Outcome):\s*(.+)$", re.M)

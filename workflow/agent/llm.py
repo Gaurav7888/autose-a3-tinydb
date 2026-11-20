@@ -22,6 +22,15 @@ class LLMError(RuntimeError):
     pass
 
 
+class Reply:
+    def __init__(self, text: str, content: list) -> None:
+        self.text = text
+        self.content = content
+
+    def tool_uses(self) -> list[dict]:
+        return [block for block in self.content if isinstance(block, dict) and block.get("type") == "tool_use"]
+
+
 def scrub(text: str) -> str:
     return _SECRET.sub("[redacted]", text or "")
 
@@ -66,16 +75,20 @@ class LLM:
         self.usage = Usage()
 
     def complete(self, model: str, system: str, messages: list[dict], max_tokens: int = 4096) -> str:
+        return self.converse(model, system, messages, max_tokens=max_tokens).text
+
+    def converse(self, model: str, system: str, messages: list[dict], tools: list | None = None, max_tokens: int = 4096) -> Reply:
         if self.usage.total > TOKEN_CAP:
             raise BudgetExceeded(f"token cap {TOKEN_CAP} exceeded")
-        body = json.dumps(
-            {
-                "model": model,
-                "max_tokens": max_tokens,
-                "system": system,
-                "messages": messages,
-            }
-        ).encode()
+        payload_in = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": messages,
+        }
+        if tools:
+            payload_in["tools"] = tools
+        body = json.dumps(payload_in).encode()
         headers = {
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
@@ -115,8 +128,9 @@ class LLM:
         self.usage.add(payload)
         if self.usage.total > TOKEN_CAP:
             raise BudgetExceeded(f"token cap {TOKEN_CAP} exceeded during the call")
+        content = payload.get("content") or []
         parts = []
-        for block in payload.get("content") or []:
+        for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
                 parts.append(block.get("text") or "")
-        return scrub("".join(parts))
+        return Reply(scrub("".join(parts)), content)

@@ -134,33 +134,68 @@ def _one_object(text: str, start: int) -> dict | None:
     return None
 
 
-def tool_loop(client: LLM, model: str, system: str, messages: list[dict], root: Path, calls: int, allow_write: bool) -> list[str]:
+def _schema(properties: dict, required: list[str]) -> dict:
+    return {"type": "object", "properties": properties, "required": required}
+
+
+def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
+    return {"name": name, "description": description, "input_schema": _schema(properties, required)}
+
+
+_READ = _tool("read_file", "Read a UTF-8 file. Lines are numbered.", {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}, ["path"])
+_SEARCH = _tool("search", "Find a regex under tinydb/ or tests/.", {"pattern": {"type": "string"}, "path": {"type": "string"}}, ["pattern"])
+_REPLACE = _tool("replace", "Replace one exact occurrence of old with new.", {"path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}}, ["path", "old", "new"])
+_WRITE = _tool("write_file", "Create or overwrite a file under tinydb/ or tests/.", {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])
+_DONE = _tool("done", "Hand the tree to the harness for compile and pytest.", {"summary": {"type": "string"}}, ["summary"])
+_FINISH = _tool(
+    "finish",
+    "Submit the review after reading a changed file.",
+    {
+        "verdict": {"type": "string", "enum": ["APPROVE", "REQUEST_CHANGES"]},
+        "route": {"type": "string", "enum": ["code", "approach", "none"]},
+        "summary": {"type": "string"},
+        "findings": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "summary": {"type": "string"}}}},
+    },
+    ["verdict", "route", "summary"],
+)
+BUILDER_TOOLS = [_READ, _SEARCH, _REPLACE, _WRITE, _DONE]
+REVIEWER_TOOLS = [_READ, _SEARCH, _FINISH]
+
+
+def tool_loop(client: LLM, model: str, system: str, messages: list[dict], root: Path, calls: int, tools: list[dict]) -> tuple[list[str], list[str], dict | None]:
     reads: list[str] = []
+    log: list[str] = []
+    finished = None
     for _ in range(calls):
-        reply = client.complete(model, system, messages, MAX_TOKENS)
-        messages.append({"role": "assistant", "content": reply})
-        call = extract_call(reply)
-        if call is None:
-            messages.append({
-                "role": "user",
-                "content": "That was not a tool call. Reply with one JSON object and no other text.",
-            })
+        reply = client.converse(model, system, messages, tools=tools, max_tokens=MAX_TOKENS)
+        uses = reply.tool_uses()
+        messages.append({"role": "assistant", "content": reply.content or [{"type": "text", "text": reply.text or ""}]})
+        if not uses:
+            messages.append({"role": "user", "content": "Call a tool. Do not answer in prose."})
+            log.append("no tool")
             continue
-        name = str(call.get("tool") or "")
-        if name in {"done", "finish"}:
-            messages.append({"role": "user", "content": "tool result: stopped"})
-            return reads
-        if name in {"replace", "write_file"} and not allow_write:
-            messages.append({"role": "user", "content": "tool result: this role cannot edit files"})
-            continue
-        if name == "read_file" and call.get("path"):
-            reads.append(str(call["path"]).replace("\\", "/").lstrip("./"))
-        try:
-            result = dispatch(root, call)
-        except Exception as exc:  # noqa: BLE001
-            result = f"tool error: {exc}"
-        messages.append({"role": "user", "content": "tool result:\n" + scrub(result)[:6000]})
-    return reads
+        results = []
+        for use in uses:
+            name = str(use.get("name") or "")
+            incoming = use.get("input") if isinstance(use.get("input"), dict) else {}
+            if name in {"done", "finish"}:
+                finished = incoming
+                log.append(f"{name} {incoming.get('verdict', incoming.get('summary', ''))}"[:200])
+                results.append({"type": "tool_result", "tool_use_id": use.get("id"), "content": "recorded"})
+                continue
+            if name == "read_file" and incoming.get("path"):
+                reads.append(str(incoming["path"]).replace("\\", "/").lstrip("./"))
+            try:
+                result = dispatch(root, {"tool": name, **incoming})
+            except Exception as exc:  # noqa: BLE001
+                result = f"tool error: {exc}"
+            first = scrub(result).splitlines()[0][:180] if result else "empty"
+            log.append(f"{name} {incoming.get('path', '')}: {first}")
+            results.append({"type": "tool_result", "tool_use_id": use.get("id"), "content": scrub(result)[:6000]})
+        messages.append({"role": "user", "content": results})
+        if finished is not None:
+            return reads, log, finished
+    return reads, log, finished
 
 
 def working_diff(root: Path) -> str:
@@ -174,8 +209,16 @@ def working_diff(root: Path) -> str:
     return diff
 
 
+def _diff_touches(diff: str, prefix: str) -> bool:
+    return any(line.startswith(f"diff --git a/{prefix}") for line in diff.splitlines())
+
+
 def product_changed(diff: str) -> bool:
-    return any(line.startswith("diff --git a/tinydb/") for line in diff.splitlines())
+    return _diff_touches(diff, "tinydb/")
+
+
+def tests_changed(diff: str) -> bool:
+    return _diff_touches(diff, "tests/")
 
 
 def diff_paths(diff: str) -> set[str]:
@@ -235,8 +278,11 @@ def evaluate(root: Path) -> tuple[bool, str, str]:
     diff = working_diff(root)
     passed, log = run_suite(root)
     changed = product_changed(diff)
+    tested = tests_changed(diff)
     if passed and not changed:
         return False, diff, "pytest passed but no file under tinydb/ changed\n" + log
+    if passed and not tested:
+        return False, diff, "pytest passed but no file under tests/ changed. Add a test for every acceptance criterion, then fix the code until those tests pass.\n" + log
     if not passed:
         return False, diff, log
     return True, diff, log
@@ -323,16 +369,18 @@ def run_build(args, client: LLM, directory: Path, model: str) -> int:
         "role": "user",
         "content": "Specification:\n" + spec + "\n\nDesign:\n" + design + extra,
     }]
-    tool_loop(client, model, system, messages, ROOT, 10, True)
+    _reads, tool_log, _done = tool_loop(client, model, system, messages, ROOT, 10, BUILDER_TOOLS)
     ok, diff, log = evaluate(ROOT)
     if not ok:
-        messages.append({"role": "user", "content": "The harness check failed. Fix the code.\n\n" + log[-4000:]})
-        tool_loop(client, model, system, messages, ROOT, 6, True)
+        messages.append({"role": "user", "content": "The harness check failed. Fix the code and the tests.\n\n" + log[-4000:]})
+        _reads, more, _done = tool_loop(client, model, system, messages, ROOT, 6, BUILDER_TOOLS)
+        tool_log.extend(more)
         ok, diff, log = evaluate(ROOT)
     allow_route = args.allow_design_route and not ok
     route = "design" if allow_route else "none"
     report = (
         f"# Test report\n\npassed: {str(ok).lower()}\nroute: {route}\n\n"
+        f"## Tools\n\n" + "\n".join(f"- {line}" for line in tool_log) + "\n\n"
         f"## Harness log\n\n```\n{log}\n```\n"
     )
     write_text(directory / "test_report.md", report)
@@ -367,22 +415,14 @@ def run_review(args, client: LLM, directory: Path) -> int:
             + excuse
         ),
     }]
-    reads = tool_loop(client, REVIEWER, system, messages, ROOT, 8, False)
-    finish = None
-    for message in reversed(messages):
-        if message["role"] == "assistant":
-            call = extract_call(message["content"])
-            if call and call.get("tool") in {"finish", "done"} and call.get("verdict"):
-                finish = call
-                break
-    if finish is None:
-        reply = client.complete(
-            REVIEWER,
-            system,
-            messages + [{"role": "user", "content": "Reply now with the finish JSON. Include verdict, route, summary and findings."}],
-            MAX_TOKENS,
-        )
-        finish = extract_call(reply) or {
+    reads, tool_log, finish = tool_loop(client, REVIEWER, system, messages, ROOT, 8, REVIEWER_TOOLS)
+    if not finish or "verdict" not in finish:
+        messages.append({"role": "user", "content": "Call finish now with verdict, route, summary and findings."})
+        more_reads, more_log, finish = tool_loop(client, REVIEWER, system, messages, ROOT, 2, REVIEWER_TOOLS)
+        reads.extend(more_reads)
+        tool_log.extend(more_log)
+    if not finish:
+        finish = {
             "verdict": "REQUEST_CHANGES",
             "route": "code",
             "summary": "The reviewer did not return a verdict.",
@@ -420,6 +460,8 @@ def run_review(args, client: LLM, directory: Path) -> int:
         lines.append("- none")
     lines += ["", "## Files read", ""]
     lines.extend(f"- `{path}`" for path in reads)
+    lines += ["", "## Tools", ""]
+    lines.extend(f"- {line}" for line in tool_log)
     lines += ["", "## Pytest", "", "```", log[-2000:], "```", ""]
     write_text(directory / "review.md", "\n".join(lines))
     write_outputs({"ok": "true", "verdict": verdict, "route": route, "raw_verdict": raw})
@@ -486,11 +528,11 @@ def run_monolith(args, client: LLM, title: str, body: str, directory: Path) -> i
         print(design_reason)
         return 1
     messages.append({"role": "user", "content": "The design check passed. Edit the repository with tools until the acceptance criteria are met, then send the done tool."})
-    tool_loop(client, MONOLITH, system + "\n\n" + prompt("builder.md"), messages, ROOT, 10, True)
+    tool_loop(client, MONOLITH, system + "\n\n" + prompt("builder.md"), messages, ROOT, 10, BUILDER_TOOLS)
     ok, diff, log = evaluate(ROOT)
     if not ok:
         messages.append({"role": "user", "content": "The harness check failed.\n" + log[-4000:]})
-        tool_loop(client, MONOLITH, system + "\n\n" + prompt("builder.md"), messages, ROOT, 6, True)
+        tool_loop(client, MONOLITH, system + "\n\n" + prompt("builder.md"), messages, ROOT, 6, BUILDER_TOOLS)
         ok, diff, log = evaluate(ROOT)
     write_text(directory / "test_report.md", f"# Test report\n\npassed: {str(ok).lower()}\n\n```\n{log}\n```\n")
     write_text(directory / "diff.patch", diff or "(empty diff)\n")
