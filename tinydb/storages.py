@@ -130,7 +130,8 @@ class JSONStorage(Storage):
 
         if not size:
             # File is empty, so we return ``None`` so TinyDB can properly
-            # initialize the database
+            # initialize the database. A file that contains only whitespace
+            # is not empty: it is invalid JSON and should still raise.
             return None
         else:
             # Return the cursor to the beginning of the file
