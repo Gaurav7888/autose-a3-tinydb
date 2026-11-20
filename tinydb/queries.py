@@ -486,6 +486,19 @@ class Query(QueryInstance):
             ('one_of', self._path, freeze(items))
         )
 
+    def between(self, lower: Any, upper: Any) -> QueryInstance:
+        """Inclusive range. Values that cannot be compared do not match."""
+        def test(value):
+            try:
+                return lower <= value <= upper
+            except TypeError:
+                return False
+
+        return self._generate_test(
+            lambda value: test(value),
+            ('between', self._path, freeze(lower), freeze(upper)),
+        )
+
     def fragment(self, document: Mapping) -> QueryInstance:
         def test(value):
             for key in document:
