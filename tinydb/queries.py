@@ -475,14 +475,21 @@ class Query(QueryInstance):
 
     def one_of(self, items: list[Any]) -> QueryInstance:
         """
-        Check if the value is contained in a list or generator.
+        Check if the value is contained in a list, using strict type equality
+        (no implicit type coercion).
 
         >>> Query().f1.one_of(['value 1', 'value 2'])
 
         :param items: The list of items to check with
         """
+        def test(value):
+            return any(
+                value == item and type(value) is type(item)
+                for item in items
+            )
+
         return self._generate_test(
-            lambda value: value in items,
+            test,
             ('one_of', self._path, freeze(items))
         )
 

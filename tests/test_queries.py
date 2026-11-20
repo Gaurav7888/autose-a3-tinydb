@@ -431,6 +431,40 @@ def test_one_of():
     assert query({'key1': 'value 2'})
     assert not query({'key1': 'value 3'})
 
+    # AC-1: int 1 matches one_of([1, 2])
+    assert Query().count.one_of([1, 2])({'count': 1})
+
+    # AC-2: int 1 does NOT match one_of([True]) (strict type check)
+    assert not Query().count.one_of([True])({'count': 1})
+
+    # AC-3: bool True does NOT match one_of([1]) (strict type check)
+    assert not Query().enabled.one_of([1])({'enabled': True})
+
+    # AC-4: str "1" does NOT match one_of([1]) (strict type check)
+    assert not Query().id.one_of([1])({'id': '1'})
+
+    # AC-5: float 1.0 does NOT match one_of([1]) (strict type check)
+    assert not Query().amount.one_of([1])({'amount': 1.0})
+
+    # AC-6: bool True matches one_of([True])
+    assert Query().enabled.one_of([True])({'enabled': True})
+
+    # AC-7: float 1.0 matches one_of([1.0])
+    assert Query().amount.one_of([1.0])({'amount': 1.0})
+
+    # AC-8: str "a" matches one_of(['a', 'b'])
+    assert Query().status.one_of(['a', 'b'])({'status': 'a'})
+
+    # AC-9: str "c" does NOT match one_of(['a', 'b'])
+    assert not Query().status.one_of(['a', 'b'])({'status': 'c'})
+
+    # hash is stable and cacheable
+    assert hash(Query().count.one_of([1, 2]))
+    assert Query().count.one_of([1, 2]).is_cacheable()
+    # different sequences produce different hashes
+    assert (Query().count.one_of([1, 2])._hash !=
+            Query().count.one_of([1, 3])._hash)
+
 
 def test_hash():
     d = {
