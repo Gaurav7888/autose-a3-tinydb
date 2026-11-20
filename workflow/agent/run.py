@@ -390,9 +390,8 @@ def run_build(args, client: LLM, directory: Path, model: str) -> int:
     return 0 if ok else 1
 
 
-def run_review(args, client: LLM, directory: Path) -> int:
+def run_review(args, client: LLM, directory: Path, title: str, body: str) -> int:
     hide_oracle(ROOT)
-    title, body = issue_from(args)
     base = args.base or "master"
     diff = subprocess.check_output(["git", "diff", f"{base}...HEAD"], cwd=ROOT, text=True)
     passed, log = run_suite(ROOT)
@@ -570,7 +569,7 @@ def main() -> int:
         elif args.stage == "build":
             code = run_build(args, client, directory, BUILDER)
         elif args.stage == "review":
-            code = run_review(args, client, directory)
+            code = run_review(args, client, directory, title, body)
         else:
             code = run_monolith(args, client, title, body, directory)
     except (BudgetExceeded, LLMError) as exc:
