@@ -24,7 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
           ref: seed/${{ matrix.seed }}
+          path: pr
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v5
@@ -34,11 +38,9 @@ jobs:
       - name: Review
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
-          GITHUB_TOKEN: ""
-          GH_TOKEN: ""
-          PR_TOKEN: ""
         run: |
           python workflow/agent/run.py review \
+            --repo pr \
             --issue-file "experiment/seeded_prs/${{ matrix.seed }}/issue.md" \
             --issue-title "${{ matrix.seed }}" \
             --context "${{ matrix.context }}" \
