@@ -570,7 +570,11 @@ def main() -> int:
     parser.add_argument("--excuse", default="")
     parser.add_argument("--allow-design-route", action="store_true")
     parser.add_argument("--artifacts", default="")
+    parser.add_argument("--repo", default="")
     args = parser.parse_args()
+    global ROOT
+    if args.repo:
+        ROOT = Path(args.repo).resolve()
     directory = artifact_dir(args.artifacts)
     client = None
     code = 1
