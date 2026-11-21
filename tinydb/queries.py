@@ -473,6 +473,26 @@ class Query(QueryInstance):
             ('all', self._path, freeze(cond))
         )
 
+    def between(self, low: Any, high: Any) -> QueryInstance:
+        """
+        Test a dict value for being within an inclusive range [low, high].
+
+        >>> Query().f1.between(1, 10)
+
+        :param low: The lower bound (inclusive)
+        :param high: The upper bound (inclusive)
+        """
+        def test(value):
+            try:
+                return low <= value <= high
+            except TypeError:
+                return False
+
+        return self._generate_test(
+            test,
+            ('between', self._path, low, high)
+        )
+
     def one_of(self, items: list[Any]) -> QueryInstance:
         """
         Check if the value is contained in a list or generator.

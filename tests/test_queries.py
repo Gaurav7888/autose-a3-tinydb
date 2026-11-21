@@ -527,3 +527,58 @@ def test_get_item():
 
     assert query({'test': 1})
     assert not query({'test': 0})
+
+
+def test_between_integers():
+    """AC-1: inclusive integer range matching."""
+    query = Query().age.between(18, 65)
+
+    assert query({'age': 18})   # lower bound inclusive
+    assert query({'age': 40})   # middle value
+    assert query({'age': 65})   # upper bound inclusive
+    assert not query({'age': 17})  # below lower bound
+    assert not query({'age': 66})  # above upper bound
+    assert hash(query)
+
+
+def test_between_strings():
+    """AC-2: inclusive string range matching."""
+    query = Query().name.between('b', 'd')
+
+    assert query({'name': 'b'})
+    assert query({'name': 'c'})
+    assert query({'name': 'd'})
+    assert not query({'name': 'a'})
+    assert not query({'name': 'e'})
+    assert hash(query)
+
+
+def test_between_non_comparable():
+    """AC-3: non-comparable values return False without raising."""
+    query = Query().value.between(1, 10)
+
+    # comparable in-range values still match
+    assert query({'value': 5})
+
+    # non-comparable types must not raise and must not match
+    assert not query({'value': None})
+    assert not query({'value': {}})
+    assert not query({'value': []})
+
+
+def test_between_inequality():
+    """AC-4: queries with different bounds are not equal and have different hashes."""
+    q1 = Query().age.between(1, 5)
+    q2 = Query().age.between(1, 9)
+
+    assert q1 != q2
+    assert hash(q1) != hash(q2)
+
+
+def test_between_equality():
+    """AC-5: queries with identical bounds are equal and have the same hash."""
+    q1 = Query().age.between(1, 5)
+    q2 = Query().age.between(1, 5)
+
+    assert q1 == q2
+    assert hash(q1) == hash(q2)
