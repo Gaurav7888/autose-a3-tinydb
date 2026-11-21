@@ -1,0 +1,25 @@
+diff --git a/tests/test_one_of_strings.py b/tests/test_one_of_strings.py
+new file mode 100644
+index 0000000..96593d2
+--- /dev/null
++++ b/tests/test_one_of_strings.py
+@@ -0,0 +1,7 @@
++from tinydb import Query
++
++
++def test_one_of_matches_strings():
++    query = Query().color.one_of(["red", "blue"])
++    assert query({"color": "red"})
++    assert not query({"color": "green"})
+diff --git a/tinydb/queries.py b/tinydb/queries.py
+index e106c5d..f127962 100644
+--- a/tinydb/queries.py
++++ b/tinydb/queries.py
+@@ -482,6 +482,7 @@ class Query(QueryInstance):
+         :param items: The list of items to check with
+         """
+         return self._generate_test(
++            # Python equality treats True and 1 as the same value.
+             lambda value: value in items,
+             ('one_of', self._path, freeze(items))
+         )

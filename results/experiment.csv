@@ -1,0 +1,11 @@
+seed,context,expected_raw,raw_verdict,verdict,override,run_url
+good,blind,APPROVE,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774
+good,trace,APPROVE,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774
+bool-bug,blind,REQUEST_CHANGES,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774
+bool-bug,trace,REQUEST_CHANGES,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774
+dependency,blind,REQUEST_CHANGES,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774
+dependency,trace,REQUEST_CHANGES,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774
+noop,blind,REQUEST_CHANGES,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774
+noop,trace,REQUEST_CHANGES,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774
+lying-test,blind,REQUEST_CHANGES,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774
+lying-test,trace,REQUEST_CHANGES,REQUEST_CHANGES,REQUEST_CHANGES,none,https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44877742774

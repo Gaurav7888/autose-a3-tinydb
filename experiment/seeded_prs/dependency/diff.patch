@@ -1,0 +1,39 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 9f58822..f535844 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -4,6 +4,7 @@ version = "4.9.0"
+ description = "TinyDB is a tiny, document oriented database optimized for your happiness :)"
+ authors = [{ name = "Markus Siemens", email = "markus@m-siemens.de" }]
+ requires-python = ">=3.10,<4"
++dependencies = ["PyYAML>=6"]
+ readme = "README.rst"
+ license = "MIT"
+ keywords = [
+diff --git a/tinydb/yaml_storage.py b/tinydb/yaml_storage.py
+new file mode 100644
+index 0000000..996c680
+--- /dev/null
++++ b/tinydb/yaml_storage.py
+@@ -0,0 +1,21 @@
++"""YAML storage. Imports PyYAML only when a database is read or written."""
++
++from tinydb.storages import Storage
++
++
++class YAMLStorage(Storage):
++    def __init__(self, path: str, *args, **kwargs):
++        self.path = path
++
++    def read(self):
++        import yaml
++        with open(self.path, encoding="utf-8") as handle:
++            text = handle.read()
++        if not text.strip():
++            return None
++        return yaml.safe_load(text)
++
++    def write(self, data) -> None:
++        import yaml
++        with open(self.path, "w", encoding="utf-8") as handle:
++            yaml.safe_dump(data, handle)

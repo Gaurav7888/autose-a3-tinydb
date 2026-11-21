@@ -19,7 +19,7 @@ Gaurav Sarkar, roll number 2025701012.
 
 The workflow calls the Anthropic Messages API. `ANTHROPIC_AUTH_TOKEN` is a repository secret. An `sk-ant-api...` key is sent as `x-api-key`. Any other token, including a Claude Code OAuth token, is sent as a bearer token with the `oauth-2025-04-20` beta header. `PR_TOKEN` is a maintainer token used only to push the issue branch and open the pull request. The review job does not receive it.
 
-Token totals are in `results/results.csv` after the runs. There is a hard stop at 500,000 input plus output tokens for one stage process.
+Recorded stage tokens, from the uploaded `usage.json` files, are 452,567. Review calls are extra and were not in those files. There is a hard stop at 500,000 input plus output tokens inside one stage process. Results and run links are in `results/`. `demo.mp4` walks through issue 3, run 44876587072, from the issue text to the posted review. The pages are the links in `results/runs.md`.
 
 ## How to start a run
 

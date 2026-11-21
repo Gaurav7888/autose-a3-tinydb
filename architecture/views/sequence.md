@@ -1,6 +1,6 @@
 # Sequence view
 
-This is the sequence the workflow implements. A later commit adds the link to one real run at the bottom. The shape below was fixed before the agent code existed.
+This is the sequence the workflow implements. The shape below was fixed before the agent code existed. One recorded run is linked at the bottom.
 
 Happy path for a bug report. The vague issue is the same sequence and stops at the requirements check.
 
@@ -57,3 +57,9 @@ sequenceDiagram
 | Review round 2 still requests changes | `review.md` | The run stops. The PR stays open |
 
 A model that asks to skip a check has no job it can start. The workflow file is the only place those edges exist.
+
+## One recorded run
+
+Issue 3, "Add an inclusive between test to Query", run [44876587072](https://github.com/Gaurav7888/autose-a3-tinydb/actions/runs/44876587072), pull request [#13](https://github.com/Gaurav7888/autose-a3-tinydb/pull/13).
+
+The gate accepted the `autose` label. Requirements and design passed their checks. The builder edited `tinydb/queries.py` and the tests. Pytest passed, `ci.yml` passed, and the release job opened the pull request. The reviewer, in a separate job, read `queries.py` and requested a change: the hash tuple for `between` did not call `freeze` on the bounds. The rework job did not start. The pull request is still open. Hidden tests for that pull request later passed 3/3. The workflow did not merge.

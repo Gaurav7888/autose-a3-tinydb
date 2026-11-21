@@ -1,0 +1,14 @@
+diff --git a/tests/test_one_of_bool.py b/tests/test_one_of_bool.py
+new file mode 100644
+index 0000000..2fa3395
+--- /dev/null
++++ b/tests/test_one_of_bool.py
+@@ -0,0 +1,8 @@
++from tinydb import Query
++
++
++def test_one_of_treats_bool_as_int():
++    """Lock the current contract: True is contained in [1]."""
++    query = Query().n.one_of([1])
++    assert query({"n": True})
++    assert not query({"n": False})
