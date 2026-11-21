@@ -85,9 +85,19 @@ class CachingMiddleware(Middleware):
     #: The number of write operations to cache before writing to disc
     WRITE_CACHE_SIZE = 1000
 
-    def __init__(self, storage_cls):
+    def __init__(self, storage_cls, cache_size: Optional[int] = None):
         # Initialize the parent constructor
         super().__init__(storage_cls)
+
+        # Validate and store the per-instance cache size
+        if cache_size is None:
+            self._write_cache_size = self.WRITE_CACHE_SIZE
+        else:
+            if cache_size <= 0:
+                raise ValueError(
+                    'cache_size must be a positive integer, got {}'.format(cache_size)
+                )
+            self._write_cache_size = cache_size
 
         # Prepare the cache
         self.cache = None
@@ -114,7 +124,7 @@ class CachingMiddleware(Middleware):
         self._cache_modified_count += 1
 
         # Check if we need to flush the cache
-        if self._cache_modified_count >= self.WRITE_CACHE_SIZE:
+        if self._cache_modified_count >= self._write_cache_size:
             self.flush()
 
     def flush(self):
