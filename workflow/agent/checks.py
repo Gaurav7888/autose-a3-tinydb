@@ -63,7 +63,10 @@ _VERDICT = re.compile(
     re.I,
 )
 _AC = re.compile(r"^###\s+AC-(\d+)\s*$", re.M)
-_FIELD = re.compile(r"^(Setup|Stimulus|Outcome):\s*(.+)$", re.M)
+_FIELD = re.compile(
+    r"^\*{0,2}\s*(Setup|Stimulus|Outcome)\s*\*{0,2}\s*:\s*(.+)$",
+    re.M,
+)
 _BULLET = re.compile(
     r"`([^`\n]+)`\s*::\s*`([^`\n]+)`(?:\s+\**new\**)?",
     re.I,

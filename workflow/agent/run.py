@@ -221,6 +221,23 @@ def tests_changed(diff: str) -> bool:
     return _diff_touches(diff, "tests/")
 
 
+def _git_base(root: Path, base: str) -> str:
+    for candidate in (base, f"origin/{base}"):
+        if subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", candidate],
+            cwd=root,
+        ).returncode == 0:
+            return candidate
+    subprocess.run(["git", "fetch", "--no-tags", "origin", f"{base}:refs/remotes/origin/{base}"], cwd=root, check=False)
+    for candidate in (f"origin/{base}", base):
+        if subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", candidate],
+            cwd=root,
+        ).returncode == 0:
+            return candidate
+    return base
+
+
 def diff_paths(diff: str) -> set[str]:
     found = re.findall(r"^diff --git a/.+? b/(.+)$", diff, re.M)
     return set(found)
@@ -392,7 +409,7 @@ def run_build(args, client: LLM, directory: Path, model: str) -> int:
 
 def run_review(args, client: LLM, directory: Path, title: str, body: str) -> int:
     hide_oracle(ROOT)
-    base = args.base or "master"
+    base = _git_base(ROOT, args.base or "master")
     diff = subprocess.check_output(["git", "diff", f"{base}...HEAD"], cwd=ROOT, text=True)
     passed, log = run_suite(ROOT)
     system = prompt("reviewer.md")
